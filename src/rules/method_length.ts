@@ -10,7 +10,7 @@ export class MethodLengthConf extends BasicRuleConfig {
   /** Maximum method length in statements */
   public statements: number = 100;
   /** Checks for empty methods. */
-  public errorWhenEmpty: boolean = true;
+  public errorWhenEmpty?: boolean = true;
 }
 
 enum IssueType {
