@@ -1,57 +1,51 @@
-import * as Statements from "./statements";
-import * as Expressions from "./expressions";
-import {Unknown, MacroContent, MacroCall, Comment, Empty} from "./statements/_statement";
-import {StatementNode, ExpressionNode, TokenNodeRegex, TokenNode} from "./nodes";
+import * as Statements from "../abap/statements";
+import * as Expressions from "../abap/expressions";
+import {MacroContent, Comment, Empty} from "../abap/statements/_statement";
 import {ABAPFile} from "../files";
-import {Identifier} from "./tokens";
-import {Position} from "../position";
-import {Config} from "..";
-import {SequentialBlank, SequentialBlankConf} from "../rules";
+import {StatementNode} from "../abap/nodes/statement_node";
+import {IIndentationOptions} from "./indentation_options";
 
 // todo, will break if there is multiple statements per line?
-
-export interface IIndentationOptions {
-  alignTryCatch?: boolean;
-  globalClassSkipFirst?: boolean;
-}
-
-class Stack {
-  private items: number[] = [];
-
-  public push(item: number) {
-    this.items.push(item);
-  }
-
-  public peek(): number {
-    return this.items[this.items.length - 1];
-  }
-
-  public pop() {
-    const peek = this.peek();
-    this.items = this.items.slice(0, this.items.length - 1);
-    return peek;
-  }
-}
-
-class Indentation {
+export class Indent {
   private readonly options: IIndentationOptions;
   private readonly globalClasses = new Set();
+  constructor(options?: IIndentationOptions) {
+    this.options = options || {};
+  }
 
-  constructor(options: IIndentationOptions) {
-    this.options = options;
+  public execute(original: ABAPFile, modified: string): string {
+    const statements = original.getStatements();
+    const expected = this.getExpectedIndents(original);
+    if (expected.length !== statements.length) {
+      throw new Error("Pretty Printer, expected lengths to match");
+    }
+
+    const lines = modified.split("\n");
+
+    for (const statement of statements) {
+      const exp = expected.shift();
+      if (exp === undefined || exp < 0) {
+        continue;
+      }
+      const row = statement.getFirstToken().getStart().getRow() - 1;
+      lines[row] = lines[row].trim();
+      for (let i = 1; i < exp; i++) {
+        lines[row] = " " + lines[row];
+      }
+    }
+
+    return lines.join("\n");
   }
 
   // returns list of expected indentation for each line/statement?
-  public run(file: ABAPFile): number[] {
+  public getExpectedIndents(file: ABAPFile): number[] {
     const ret: number[] = [];
     const init: number = 1;
     let indent: number = init;
     let parentIsEvent: boolean = false;
     const stack = new Stack();
-
     for (const statement of file.getStatements()) {
       const type = statement.get();
-
       if (type instanceof Statements.EndIf
         || type instanceof Statements.EndWhile
         || type instanceof Statements.EndModule
@@ -102,9 +96,7 @@ class Indentation {
         ret.push(-1);
         continue;
       }
-
       ret.push(indent);
-
       if (type instanceof Statements.If
         || type instanceof Statements.While
         || type instanceof Statements.Module
@@ -141,17 +133,13 @@ class Indentation {
         stack.push(indent);
       }
     }
-
     return ret;
   }
-
   private skipIndentForGlobalClass(statement: StatementNode): boolean {
     if (!this.options.globalClassSkipFirst) {
       return false;
     }
-
     const type = statement.get();
-
     if (type instanceof Statements.ClassDefinition && statement.findFirstExpression(Expressions.Global)) {
       const className = statement.findFirstExpression(Expressions.ClassName);
       if (className) {
@@ -168,136 +156,20 @@ class Indentation {
   }
 }
 
-export class PrettyPrinter {
-  private result: string;
-  private readonly file: ABAPFile;
-  private readonly options: IIndentationOptions;
-  private readonly config: Config;
+class Stack {
+  private items: number[] = [];
 
-  constructor(file: ABAPFile, config: Config, options?: IIndentationOptions) {
-    this.result = file.getRaw();
-    this.file = file;
-    this.options = options || {};
-    this.config = config;
+  public push(item: number) {
+    this.items.push(item);
   }
 
-  public run(): string {
-    const statements = this.file.getStatements();
-    for (const statement of statements) {
-      if (statement.get() instanceof Unknown
-        || statement.get() instanceof MacroContent
-        || statement.get() instanceof MacroCall
-        || statement.get() instanceof Comment) {
-        continue;
-      }
-      // note that no positions are changed during a upperCaseKeys operation
-      this.upperCaseKeywords(statement);
-    }
-    this.indentCode();
-
-    const sequentialBlankConfig = this.getSequentialBlankConfig();
-    if (sequentialBlankConfig && sequentialBlankConfig.enabled) {
-      this.removeSequentialBlanks(sequentialBlankConfig.lines);
-    }
-
-    return this.result;
+  public peek(): number {
+    return this.items[this.items.length - 1];
   }
 
-  private getSequentialBlankConfig(): SequentialBlankConf | undefined {
-    return this.config.readByRule(new SequentialBlank().getKey());
+  public pop() {
+    const peek = this.peek();
+    this.items = this.items.slice(0, this.items.length - 1);
+    return peek;
   }
-
-  private removeSequentialBlanks(threshold: number) {
-    const rows = this.file.getRawRows();
-
-    let blanks = 0;
-    const rowsToRemove: number[] = [];
-
-    for (let i = 0; i < rows.length; i++) {
-      if (rows[i] === "") {
-        blanks++;
-      } else {
-        blanks = 0;
-      }
-
-      if (blanks === threshold) {
-        // count additional blanks
-        for (let j = i; j < rows.length; j++) {
-          if (rows[j] === "") {
-            rowsToRemove.push(j);
-          } else {
-            break;
-          }
-        }
-      }
-    }
-    this.removeRows(rowsToRemove);
-  }
-
-  public getExpectedIndentation(): number[] {
-    return (new Indentation(this.options)).run(this.file);
-  }
-
-  private indentCode() {
-    const statements = this.file.getStatements();
-    const expected = this.getExpectedIndentation();
-    if (expected.length !== statements.length) {
-      throw new Error("Pretty Printer, expected lengths to match");
-    }
-
-    const lines = this.result.split("\n");
-
-    for (const statement of statements) {
-      const exp = expected.shift();
-      if (exp === undefined || exp < 0) {
-        continue;
-      }
-      const row = statement.getFirstToken().getStart().getRow() - 1;
-      lines[row] = lines[row].trim();
-      for (let i = 1; i < exp; i++) {
-        lines[row] = " " + lines[row];
-      }
-    }
-
-    this.result = lines.join("\n");
-  }
-
-  private removeRows(rowsToRemove: number[]) {
-    const lines = this.result.split("\n");
-
-    const withoutRemoved = lines.filter((_, idx) => {
-      return rowsToRemove.indexOf(idx) === -1;
-    });
-
-    this.result = withoutRemoved.join("\n");
-  }
-
-
-  private replaceString(pos: Position, str: string) {
-    const lines = this.result.split("\n");
-    const line = lines[pos.getRow() - 1];
-
-    lines[pos.getRow() - 1] = line.substr(0, pos.getCol() - 1) + str + line.substr(pos.getCol() + str.length - 1);
-
-    this.result = lines.join("\n");
-  }
-
-  private upperCaseKeywords(s: StatementNode | ExpressionNode): void {
-    for (const child of s.getChildren()) {
-      if (child instanceof TokenNodeRegex) {
-        continue;
-      } else if (child instanceof TokenNode) {
-        const token = child.get();
-        const str = token.getStr();
-        if (str !== str.toUpperCase() && token instanceof Identifier) {
-          this.replaceString(token.getStart(), str.toUpperCase());
-        }
-      } else if (child instanceof ExpressionNode) {
-        this.upperCaseKeywords(child);
-      } else {
-        throw new Error("pretty printer, traverse, unexpected node type");
-      }
-    }
-  }
-
 }
