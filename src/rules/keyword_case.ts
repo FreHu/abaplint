@@ -159,6 +159,10 @@ export class KeywordCase extends ABAPRule {
   }
 
   public violatesRule(keyword: string): boolean {
+    if (!this.conf) {
+      return false;
+    }
+
     if (this.conf.style === KeywordCaseStyle.Lower) {
       return keyword !== keyword.toLowerCase();
     }

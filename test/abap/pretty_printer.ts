@@ -140,6 +140,16 @@ describe("Fix keyword case", () => {
       expected: "REPORT zfoo.WRITE: `foo`.",
       config: upperCaseConfig,
     },
+    {
+      input: "REPORT zfoo.WRITE: `foo`.",
+      expected: "REPORT zfoo.WRITE: `foo`.",
+      config: undefined,
+    },
+    {
+      input: "report zfoo.write: `foo`.",
+      expected: "report zfoo.write: `foo`.",
+      config: undefined,
+    },
   ];
 
   tests.forEach((test) => {
